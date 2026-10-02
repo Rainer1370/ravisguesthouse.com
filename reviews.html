@@ -54,6 +54,21 @@
         status.className="status error";status.textContent=(error&&error.message?error.message:"The review could not be submitted.")+" Please try again or contact Jag directly.";button.disabled=false;button.textContent="Send review to Jag";
       }
     });
+
+    async function loadApprovedReviews(){
+      try{
+        const response=await fetch(REVIEW_API_URL+"?action=reviews"),data=await response.json();
+        if(!data.ok||!Array.isArray(data.reviews))return;
+        const container=document.querySelector("#published-reviews").parentElement;
+        data.reviews.forEach(review=>{
+          const article=document.createElement("article");article.className="review-card";
+          const quote=document.createElement("blockquote");quote.textContent=review.review;
+          const footer=document.createElement("footer");footer.textContent=review.displayName+" · "+review.rating+"/5";
+          article.append(quote,footer);container.append(article);
+        });
+      }catch(e){/* Existing testimonials remain visible when the service is unavailable. */}
+    }
+    loadApprovedReviews();
   </script>
 </body>
 </html>
