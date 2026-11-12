@@ -209,6 +209,13 @@ function postJson(ctx, params) {
   const out = ctx.sandbox.doPost({ parameter: params });
   return JSON.parse(out.getContent());
 }
+function adminApiRaw(ctx, params) {
+  const out = ctx.sandbox.doPost({ parameter: Object.assign({ action: 'admin-api' }, params) });
+  return JSON.parse(out.getContent());
+}
+function adminApi(ctx, fn, args) {
+  return adminApiRaw(ctx, { fn, args: JSON.stringify(args) });
+}
 
 let passed = 0;
 let failed = 0;
@@ -417,6 +424,36 @@ test('reset-lockout link: only Rob clears it; Jag identity does not', () => {
   assert.ok(ctx.sandbox.adminLogin('rgh.cleveland@gmail.com', 'correct-horse-battery-staple-99').token);
 });
 
+test('admin data: sheet Date timestamps are serialized to strings (script.run transport)', () => {
+  const ctx = fresh();
+  ctx.state.activeEmail = 'rob@controllattice.com';
+  // Simulate real Sheets values: the Submitted column comes back as Date objects.
+  ctx.ss._sheets['Booking Requests']._data.push([
+    new Date('2026-11-12T21:43:00Z'), 'RSGH-99', 'Pending', '7', '2027-01-05', '2027-02-05', 31,
+    'Navnita Guest', 'navnita@example.com', 'Medical student or resident', '', 'No', '', 'Venmo', '', 'website',
+  ]);
+  ctx.ss._sheets['Review Submissions']._data.push([
+    new Date('2026-11-12T21:43:00Z'), 'RSGH-REV-99', 'Pending approval', 'Navnita', 'navnita@example.com',
+    'Room 7', 5, '2026-10-01', '2026-11-01', 'Full name', 'Lovely experience.', 'website',
+  ]);
+  const data = ctx.sandbox.adminData('', '2026-11');
+  assert.ok(data && typeof data === 'object');
+  assert.ok(data.pricing && typeof data.pricing.daysPerMonth === 'number');
+  // No Date and no undefined anywhere in the payload: either one makes the
+  // google.script.run success handler receive null in production.
+  const scan = (v, path) => {
+    assert.ok(!(v instanceof Date), 'Date leaked at ' + path);
+    assert.notStrictEqual(v, undefined, 'undefined leaked at ' + path);
+    if (Array.isArray(v)) v.forEach((x, i) => scan(x, path + '[' + i + ']'));
+    else if (v && typeof v === 'object') Object.keys(v).forEach((k) => scan(v[k], path + '.' + k));
+  };
+  scan(data, 'adminData');
+  const b = data.bookings.find((r) => r[1] === 'RSGH-99');
+  assert.strictEqual(typeof b[0], 'string');
+  const r = data.reviews.find((x) => x[1] === 'RSGH-REV-99');
+  assert.strictEqual(typeof r[0], 'string');
+});
+
 test('admin auth: username is case-insensitive (Rgh.Cleveland@Gmail.com works)', () => {
   const ctx = fresh();
   ctx.state.activeEmail = 'rob@controllattice.com';
@@ -568,6 +605,114 @@ test('doGet ?action=admin returns the admin dashboard HTML', () => {
   assert.ok(html.includes('Ravi\u2019s Guest House'));
   assert.ok(html.includes('Administrator sign-in'));
   assert.ok(html.includes('adminData'));
+});
+
+// --- 11. Admin JSON API (site-hosted admin.html transport) -------------------
+test('admin API: unauthenticated adminData is rejected (no token and bogus token)', () => {
+  const ctx = fresh();
+  // NOT rob@ — the API path has no Google auto-allow in these calls.
+  ctx.state.activeEmail = 'rgh.cleveland@gmail.com';
+  const noToken = adminApi(ctx, 'adminData', ['', '2026-12']);
+  assert.strictEqual(noToken.ok, false);
+  assert.match(noToken.error, /sign-in required/);
+  const bogus = adminApi(ctx, 'adminData', ['not-a-real-token', '2026-12']);
+  assert.strictEqual(bogus.ok, false);
+  assert.match(bogus.error, /sign-in required/);
+  // Other guarded functions reject an empty token the same way.
+  const save = adminApi(ctx, 'adminSaveRate', ['', '2', 800]);
+  assert.strictEqual(save.ok, false);
+  assert.match(save.error, /sign-in required/);
+});
+
+test('admin API: adminLogin with a wrong password is rejected; unknown functions are not dispatched', () => {
+  const ctx = fresh();
+  ctx.state.activeEmail = 'rob@controllattice.com';
+  ctx.sandbox.adminSetPassword('', 'correct-horse-battery-staple-99');
+  ctx.state.activeEmail = 'rgh.cleveland@gmail.com';
+  const wrong = adminApi(ctx, 'adminLogin', ['rgh.cleveland@gmail.com', 'wrong-password-here']);
+  assert.strictEqual(wrong.ok, false);
+  assert.match(wrong.error, /Incorrect username or password/);
+  const wrongUser = adminApi(ctx, 'adminLogin', ['someone@example.com', 'correct-horse-battery-staple-99']);
+  assert.strictEqual(wrongUser.ok, false);
+  assert.match(wrongUser.error, /Incorrect username or password/);
+  // Only the dashboard's own functions are whitelisted.
+  const unknown = adminApi(ctx, 'setupBackend', []);
+  assert.strictEqual(unknown.ok, false);
+  assert.match(unknown.error, /Unknown admin function/);
+  const helper = adminApi(ctx, 'readBookings_', []);
+  assert.strictEqual(helper.ok, false);
+  assert.match(helper.error, /Unknown admin function/);
+});
+
+test('admin API: malformed args are rejected, never dispatched', () => {
+  const ctx = fresh();
+  ctx.state.activeEmail = 'rgh.cleveland@gmail.com';
+  const notJson = adminApiRaw(ctx, { fn: 'adminData', args: 'not-json' });
+  assert.strictEqual(notJson.ok, false);
+  assert.match(notJson.error, /Invalid args/);
+  const notArray = adminApiRaw(ctx, { fn: 'adminData', args: '{"token":"x"}' });
+  assert.strictEqual(notArray.ok, false);
+  assert.match(notArray.error, /Invalid args/);
+});
+
+test('admin API: login -> adminData round trip returns a JSON-safe payload (Date cells as strings)', () => {
+  const ctx = fresh();
+  ctx.state.activeEmail = 'rob@controllattice.com';
+  ctx.sandbox.adminSetPassword('', 'correct-horse-battery-staple-99');
+  // Real Sheets shape: Submitted cells arrive as Date objects (the v10 bug).
+  ctx.ss._sheets['Booking Requests']._data.push([
+    new Date('2026-11-12T21:43:00Z'), 'RSGH-99', 'Pending', '7', '2027-01-05', '2027-02-05', 31,
+    'Navnita Guest', 'navnita@example.com', 'Medical student or resident', '', 'No', '', 'Venmo', '', 'website',
+  ]);
+  ctx.ss._sheets['Review Submissions']._data.push([
+    new Date('2026-11-12T21:43:00Z'), 'RSGH-REV-99', 'Pending approval', 'Navnita', 'navnita@example.com',
+    'Room 7', 5, '2026-10-01', '2026-11-01', 'Full name', 'Lovely experience.', 'website',
+  ]);
+  // Sign in through the API itself (no Google identity on this path).
+  ctx.state.activeEmail = 'rgh.cleveland@gmail.com';
+  const login = adminApi(ctx, 'adminLogin', ['rgh.cleveland@gmail.com', 'correct-horse-battery-staple-99']);
+  assert.strictEqual(login.ok, true, JSON.stringify(login));
+  assert.ok(login.result && login.result.token);
+  const res = adminApi(ctx, 'adminData', [login.result.token, '2026-11']);
+  assert.strictEqual(res.ok, true, JSON.stringify(res));
+  const data = res.result;
+  assert.strictEqual(data.actor, 'rgh.cleveland@gmail.com');
+  assert.strictEqual(data.rooms.length, 10);
+  assert.ok(data.pricing && typeof data.pricing.daysPerMonth === 'number');
+  const scan = (v, path) => {
+    assert.ok(!(v instanceof Date), 'Date leaked at ' + path);
+    assert.notStrictEqual(v, undefined, 'undefined leaked at ' + path);
+    if (Array.isArray(v)) v.forEach((x, i) => scan(x, path + '[' + i + ']'));
+    else if (v && typeof v === 'object') Object.keys(v).forEach((k) => scan(v[k], path + '.' + k));
+  };
+  scan(data, 'apiAdminData');
+  // The timestamp cells crossed the JSON transport as strings, and no
+  // row cell degraded to null (what an undefined would become in JSON).
+  const b = data.bookings.find((r) => r[1] === 'RSGH-99');
+  assert.strictEqual(typeof b[0], 'string');
+  b.forEach((cell) => assert.notStrictEqual(cell, null));
+  const r = data.reviews.find((x) => x[1] === 'RSGH-REV-99');
+  assert.strictEqual(typeof r[0], 'string');
+  r.forEach((cell) => assert.notStrictEqual(cell, null));
+});
+
+test('admin API: the issued token drives the other calls; logout invalidates it', () => {
+  const ctx = fresh();
+  ctx.state.activeEmail = 'rob@controllattice.com';
+  ctx.sandbox.adminSetPassword('', 'correct-horse-battery-staple-99');
+  ctx.state.activeEmail = 'rgh.cleveland@gmail.com';
+  const login = adminApi(ctx, 'adminLogin', ['rgh.cleveland@gmail.com', 'correct-horse-battery-staple-99']);
+  const token = login.result.token;
+  const quote = adminApi(ctx, 'adminQuote', [token, { room: '1', moveIn: '2027-02-01', moveOut: '2027-02-22', paymentMethod: '' }]);
+  assert.strictEqual(quote.ok, true, JSON.stringify(quote));
+  assert.strictEqual(quote.result.total, 722.8);
+  const reset = adminApi(ctx, 'adminResetLoginLockout', [token]);
+  assert.strictEqual(reset.ok, true);
+  const out = adminApi(ctx, 'adminLogout', [token]);
+  assert.strictEqual(out.ok, true);
+  const after = adminApi(ctx, 'adminData', [token, '2026-12']);
+  assert.strictEqual(after.ok, false);
+  assert.match(after.error, /sign-in required/);
 });
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');

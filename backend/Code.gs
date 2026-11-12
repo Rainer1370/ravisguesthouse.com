@@ -72,6 +72,16 @@
  * administrator password (adminLogin / adminSetPassword). A password
  * was set Nov 11 2026; its value is stored only as a hash, never here.
  *
+ * SITE-HOSTED ADMIN (admin.html on ravisguesthouse.com): the same
+ * dashboard is also served as a static page on the website, because
+ * Google unreliably serves ?action=admin to browsers signed into
+ * multiple/other Google accounts. That page reaches these functions
+ * through the POST action=admin-api JSON transport (adminApiResponse_)
+ * with the same username + password credentials; there is no Google
+ * identity on that path, so the rob@ auto-allow does not apply there.
+ * The Apps Script-served dashboard is unchanged and remains Rob's
+ * backdoor.
+ *
  * DO NOT run setupBackend() blindly to "find" the spreadsheet: this
  * v6 version never creates a spreadsheet. If BOOKING_SPREADSHEET_ID
  * is missing it returns an error telling Rob how to set it.
@@ -148,6 +158,7 @@ function doPost(e) {
     var action = String(p.action || '');
     if (action === 'booking') return json_(submitBooking_(p));
     if (action === 'review') return json_(submitReview_(p));
+    if (action === 'admin-api') return json_(adminApiResponse_(p));
     return json_({ ok: false, error: 'Unknown action: ' + action });
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message || err) });
@@ -672,6 +683,74 @@ function adminQuote(token, q) {
   return computeQuote_(q.room, q.moveIn, q.moveOut, q.paymentMethod);
 }
 
+// ---------------------------------------------------------------------------
+// Admin JSON API (for the site-hosted admin page, admin.html)
+// ---------------------------------------------------------------------------
+
+/**
+ * JSON transport to the SAME admin functions the Apps Script dashboard
+ * calls via google.script.run. It exists because Google serves the
+ * ?action=admin page unreliably for browsers signed into multiple /
+ * other Google accounts ("Sorry, unable to open the file at this
+ * time"), while the static site (ravisguesthouse.com) loads for anyone.
+ * admin.html on the site POSTs form fields — the same URLSearchParams
+ * transport the public booking form uses (a CORS-simple request, no
+ * preflight):
+ *   action = 'admin-api'
+ *   fn     = one of the whitelisted admin function names below
+ *   args   = JSON array of arguments, in the function's normal order
+ * and reads back { ok:true, result } or { ok:false, error }.
+ *
+ * SECURITY: this dispatcher adds NO authorisation of its own and must
+ * never gain any. Every whitelisted function except adminLogin takes
+ * the admin token as its first argument and enforces it through
+ * requireAdmin_ / validateToken_, exactly as the google.script.run
+ * path does; adminLogin is the existing username + password sign-in
+ * (with its lockout). Only the functions the dashboard itself calls
+ * are whitelisted — anything else is rejected as unknown, so no other
+ * server function (setupBackend, the import, helpers) is reachable
+ * through this route.
+ *
+ * SERIALIZATION: results go out through json_ (JSON.stringify), so a
+ * Date anywhere in a result becomes an ISO string, never a raw Date —
+ * the same guarantee the v10 dateTimeCell_ fix gives the
+ * google.script.run transport.
+ */
+function adminApiResponse_(p) {
+  var dispatch = {
+    adminLogin: adminLogin,
+    adminLogout: adminLogout,
+    adminData: adminData,
+    adminSaveRate: adminSaveRate,
+    adminSaveBooking: adminSaveBooking,
+    adminModerateReview: adminModerateReview,
+    adminSavePricing: adminSavePricing,
+    adminQuote: adminQuote,
+    adminSetPassword: adminSetPassword,
+    adminResetLoginLockout: adminResetLoginLockout
+  };
+  var fnName = String(p.fn || '');
+  var fn = dispatch[fnName];
+  if (!fn) {
+    return { ok: false, error: 'Unknown admin function: ' + fnName };
+  }
+  var args;
+  try {
+    args = JSON.parse(String(p.args || '[]'));
+  } catch (err) {
+    return { ok: false, error: 'Invalid args: expected a JSON array.' };
+  }
+  if (!Array.isArray(args)) {
+    return { ok: false, error: 'Invalid args: expected a JSON array.' };
+  }
+  try {
+    var result = fn.apply(null, args);
+    return { ok: true, result: result === undefined ? null : result };
+  } catch (err) {
+    return { ok: false, error: String(err && err.message || err) };
+  }
+}
+
 /**
  * One-off carry-forward of Calendar-only reservations / maintenance
  * blocks into the native sheet. NEVER runs automatically — an admin
@@ -909,7 +988,7 @@ function readBookings_() {
 
 function rowToBooking_(v, rowIndex) {
   var s = function (i) { return v[i] == null ? '' : String(v[i]); };
-  return { submitted: v[0], bookingId: s(1), status: s(2), room: s(3),
+  return { submitted: dateTimeCell_(v[0]), bookingId: s(1), status: s(2), room: s(3),
     moveIn: dateCell_(v[4]), moveOut: dateCell_(v[5]), nights: Number(v[6]) || 0,
     name: s(7), email: s(8), guestType: s(9), contactPreference: s(10),
     bike: s(11), paymentPreference: s(12), paymentMethod: s(13),
@@ -956,7 +1035,7 @@ function readReviews_() {
 
 function rowToReview_(v, rowIndex) {
   var s = function (i) { return v[i] == null ? '' : String(v[i]); };
-  return { submitted: v[0], reviewId: s(1), status: s(2), name: s(3),
+  return { submitted: dateTimeCell_(v[0]), reviewId: s(1), status: s(2), name: s(3),
     email: s(4), room: s(5), rating: s(6), stayFrom: s(7), stayTo: s(8),
     attribution: s(9), review: s(10), source: s(11), rowIndex: rowIndex };
 }
@@ -1234,6 +1313,16 @@ function formatDateKey_(date) {
   return d.getFullYear() + '-' +
     String(d.getMonth() + 1).padStart(2, '0') + '-' +
     String(d.getDate()).padStart(2, '0');
+}
+
+/** Serialize a sheet timestamp cell for client transport: Sheets hands
+ *  back Date objects for timestamp columns, and a Date anywhere in a
+ *  google.script.run return value makes the client success handler
+ *  receive null (the admin dashboard then fails reading 'pricing').
+ *  Always return a string. */
+function dateTimeCell_(cell) {
+  if (cell instanceof Date) return cell.toISOString();
+  return cell == null ? '' : String(cell);
 }
 
 function dateCell_(cell) {
