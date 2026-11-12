@@ -351,9 +351,9 @@ test('admin auth: rob@controllattice.com (Google identity) is allowed without a 
   assert.strictEqual(data.rooms[0].source, 'native');
 });
 
-test('admin auth: jrslmgt@gmail.com is NOT auto-allowed (v5 exact-match rule); a stranger is not either', () => {
+test('admin auth: rgh.cleveland@gmail.com is NOT auto-allowed (v5 exact-match rule); a stranger is not either', () => {
   const ctx = fresh();
-  ctx.state.activeEmail = 'jrslmgt@gmail.com';
+  ctx.state.activeEmail = 'rgh.cleveland@gmail.com';
   assert.throws(() => ctx.sandbox.adminData('', '2026-12'), /sign-in required/);
   ctx.state.activeEmail = 'someone@example.com';
   assert.throws(() => ctx.sandbox.adminData('', '2026-12'), /sign-in required/);
@@ -366,23 +366,23 @@ test('admin auth: username + password flow — set (as Rob), login, use token, l
   // Hash only: no plaintext password anywhere in script properties.
   const stored = Array.from(ctx.props.values()).join(' ');
   assert.ok(!stored.includes('correct-horse-battery-staple-99'));
-  ctx.state.activeEmail = 'jrslmgt@gmail.com';
-  assert.throws(() => ctx.sandbox.adminLogin('jrslmgt@gmail.com', 'wrong-password-here'), /Incorrect username or password/);
+  ctx.state.activeEmail = 'rgh.cleveland@gmail.com';
+  assert.throws(() => ctx.sandbox.adminLogin('rgh.cleveland@gmail.com', 'wrong-password-here'), /Incorrect username or password/);
   assert.throws(() => ctx.sandbox.adminLogin('someone@example.com', 'correct-horse-battery-staple-99'), /Incorrect username or password/);
   assert.throws(() => ctx.sandbox.adminLogin('wrong-password-here'), /Incorrect username or password/);
-  const login = ctx.sandbox.adminLogin('jrslmgt@gmail.com', 'correct-horse-battery-staple-99');
+  const login = ctx.sandbox.adminLogin('rgh.cleveland@gmail.com', 'correct-horse-battery-staple-99');
   assert.ok(login.token);
   const data = ctx.sandbox.adminData(login.token, '2026-12');
-  assert.strictEqual(data.actor, 'jrslmgt@gmail.com');
+  assert.strictEqual(data.actor, 'rgh.cleveland@gmail.com');
   ctx.sandbox.adminLogout(login.token);
   assert.throws(() => ctx.sandbox.adminData(login.token, '2026-12'), /sign-in required/);
 });
 
-test('admin auth: username is case-insensitive (Jrslmgt@Gmail.com works)', () => {
+test('admin auth: username is case-insensitive (Rgh.Cleveland@Gmail.com works)', () => {
   const ctx = fresh();
   ctx.state.activeEmail = 'rob@controllattice.com';
   ctx.sandbox.adminSetPassword('', 'correct-horse-battery-staple-99');
-  const login = ctx.sandbox.adminLogin('Jrslmgt@Gmail.com', 'correct-horse-battery-staple-99');
+  const login = ctx.sandbox.adminLogin('Rgh.Cleveland@Gmail.com', 'correct-horse-battery-staple-99');
   assert.ok(login.token);
 });
 

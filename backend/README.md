@@ -93,9 +93,9 @@ block), move-out day unblocked, sheet-unreadable → unavailable-to-
 verify, overlap rejection on submit and on admin save (excluding the
 booking's own ID), 21-night minimum, quote math (21-night Room 1 =
 $722.80; Venmo waives the fee → $695; `feeOnDeposit=false` → $720.80),
-admin auth (rob@ Google identity only; jrslmgt@gmail.com is **not**
+admin auth (rob@ Google identity only; rgh.cleveland@gmail.com is **not**
 auto-allowed under the v5 exact-match rule; Jag signs in with username
-jrslmgt@gmail.com + password set/login/logout, 14-char minimum, hash-only storage), calendar failure never breaking
+rgh.cleveland@gmail.com + password set/login/logout, 14-char minimum, hash-only storage), calendar failure never breaking
 availability or bookings (sync flagged for retry), rates, approved-
 only reviews with resolved attribution and no guest email, calendar
 import dry-run/import/dedupe, and `setupBackend` safety.
@@ -210,5 +210,5 @@ will report an error per room.
 - Existing Calendar-only reservations: import all, some, or none?
   What about entries marked free / "Available"?
 - Room 4 photos: still to come. Room 8 stays "Photos coming soon".
-- Should Jag's Google account (jrslmgt@gmail.com) ever auto-allow in
+- Should Jag's Google account (rgh.cleveland@gmail.com) ever auto-allow in
   the admin, or stay password-only?

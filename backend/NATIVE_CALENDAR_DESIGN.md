@@ -115,9 +115,9 @@ Deployment is preserved from v5: **Execute as me
   **rob@controllattice.com only**. Rob opens `?action=admin` while
   signed in to that account and needs no password.
 - **Jag uses username + password.** His username is his Google address,
-  `jrslmgt@gmail.com` (case-insensitive). `adminLogin(username, password)`
+  `rgh.cleveland@gmail.com` (case-insensitive). `adminLogin(username, password)`
   rejects a wrong username exactly like a wrong password, counting toward
-  the same lockout, and records the token actor as jrslmgt@gmail.com.
+  the same lockout, and records the token actor as rgh.cleveland@gmail.com.
   `adminSetPassword` requires an already-authorised admin, min 14
   characters, stores salt + iterated SHA-256 digest in script properties
   (never plaintext), and rotates the session version (invalidating
@@ -125,7 +125,7 @@ Deployment is preserved from v5: **Execute as me
   (5 failed attempts → 10-minute lockout) and returns an opaque token
   cached up to 6 hours. `adminLogout` removes the token. A password
   was set Nov 11 2026 (live v5 admin, not yet v6).
-- `jrslmgt@gmail.com` is **not** auto-allowed under the v5
+- `rgh.cleveland@gmail.com` is **not** auto-allowed under the v5
   exact-match rule, and this reconstruction does not change that:
   under Execute-as-me it is unverified whether
   `Session.getActiveUser()` returns Jag's address in a way that
@@ -241,7 +241,7 @@ runs automatically; an admin calls it explicitly, dry-run first.
 4. **Free / "Available" calendar entries:** how does Jag use them,
    and should any of them become native Maintenance blocks?
 5. **Jag's admin access:** password-only (current), or should
-   jrslmgt@gmail.com ever auto-allow via Google identity? Needs a
+   rgh.cleveland@gmail.com ever auto-allow via Google identity? Needs a
    live verification under the Execute-as-me deployment first.
 6. **Room 4 photos:** still to come; Room 8 stays "Photos coming
    soon" until its photos arrive.
