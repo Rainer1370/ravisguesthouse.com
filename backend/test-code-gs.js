@@ -378,6 +378,45 @@ test('admin auth: username + password flow — set (as Rob), login, use token, l
   assert.throws(() => ctx.sandbox.adminData(login.token, '2026-12'), /sign-in required/);
 });
 
+test('admin lockout: 5 failures lock sign-in; Rob can reset the lockout on demand', () => {
+  const ctx = fresh();
+  ctx.state.activeEmail = 'rob@controllattice.com';
+  ctx.sandbox.adminSetPassword('', 'correct-horse-battery-staple-99');
+  ctx.state.activeEmail = 'rgh.cleveland@gmail.com';
+  for (let i = 0; i < 4; i++) {
+    assert.throws(() => ctx.sandbox.adminLogin('rgh.cleveland@gmail.com', 'wrong-password-here'), /Incorrect username or password/);
+  }
+  assert.throws(() => ctx.sandbox.adminLogin('rgh.cleveland@gmail.com', 'wrong-password-here'), /Too many failed sign-in attempts/);
+  // Even the correct password is refused while the lock is active.
+  assert.throws(() => ctx.sandbox.adminLogin('rgh.cleveland@gmail.com', 'correct-horse-battery-staple-99'), /Too many failed sign-in attempts/);
+  // A non-admin cannot clear the lockout.
+  assert.throws(() => ctx.sandbox.adminResetLoginLockout(''), /sign-in required/);
+  // Rob (Google identity) can clear it on demand.
+  ctx.state.activeEmail = 'rob@controllattice.com';
+  assert.strictEqual(ctx.sandbox.adminResetLoginLockout('').ok, true);
+  ctx.state.activeEmail = 'rgh.cleveland@gmail.com';
+  const login = ctx.sandbox.adminLogin('rgh.cleveland@gmail.com', 'correct-horse-battery-staple-99');
+  assert.ok(login.token);
+});
+
+test('reset-lockout link: only Rob clears it; Jag identity does not', () => {
+  const ctx = fresh();
+  ctx.state.activeEmail = 'rob@controllattice.com';
+  ctx.sandbox.adminSetPassword('', 'correct-horse-battery-staple-99');
+  ctx.state.activeEmail = 'rgh.cleveland@gmail.com';
+  for (let i = 0; i < 5; i++) {
+    assert.throws(() => ctx.sandbox.adminLogin('rgh.cleveland@gmail.com', 'wrong-password-here'));
+  }
+  const denied = JSON.parse(ctx.sandbox.doGet({ parameter: { action: 'reset-lockout' } }).getContent());
+  assert.strictEqual(denied.ok, false);
+  assert.throws(() => ctx.sandbox.adminLogin('rgh.cleveland@gmail.com', 'correct-horse-battery-staple-99'), /Too many failed sign-in attempts/);
+  ctx.state.activeEmail = 'rob@controllattice.com';
+  const cleared = JSON.parse(ctx.sandbox.doGet({ parameter: { action: 'reset-lockout' } }).getContent());
+  assert.strictEqual(cleared.ok, true);
+  ctx.state.activeEmail = 'rgh.cleveland@gmail.com';
+  assert.ok(ctx.sandbox.adminLogin('rgh.cleveland@gmail.com', 'correct-horse-battery-staple-99').token);
+});
+
 test('admin auth: username is case-insensitive (Rgh.Cleveland@Gmail.com works)', () => {
   const ctx = fresh();
   ctx.state.activeEmail = 'rob@controllattice.com';

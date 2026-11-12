@@ -122,7 +122,7 @@ Deployment is preserved from v5: **Execute as me
   characters, stores salt + iterated SHA-256 digest in script properties
   (never plaintext), and rotates the session version (invalidating
   existing tokens). `adminLogin` rate-limits via the script cache
-  (5 failed attempts → 10-minute lockout) and returns an opaque token
+  (5 failed attempts → 2-minute lockout) and returns an opaque token
   cached up to 6 hours. `adminLogout` removes the token. A password
   was set Nov 11 2026 (live v5 admin, not yet v6).
 - `rgh.cleveland@gmail.com` is **not** auto-allowed under the v5

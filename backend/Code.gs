@@ -117,7 +117,7 @@ var AUDIT_HEADERS = ['Time', 'Administrator', 'Action', 'Reference'];
 var BLOCKING_STATUSES = ['Confirmed', 'Maintenance'];
 var TOKEN_TTL_SECONDS = 6 * 60 * 60; // 6 hours, as in v5
 var LOGIN_MAX_ATTEMPTS = 5;
-var LOGIN_LOCK_SECONDS = 10 * 60;
+var LOGIN_LOCK_SECONDS = 2 * 60; // 2-minute lockout (Rob, Nov 12, 2026)
 var HASH_ITERATIONS = 1000;
 
 // ---------------------------------------------------------------------------
@@ -130,6 +130,7 @@ function doGet(e) {
   try {
     var action = String(p.action || '');
     if (action === 'admin') return adminHtmlOutput_();
+    if (action === 'reset-lockout') return resetLockoutResponse_();
     if (action === 'rates') return json_(getRatesResponse_());
     if (action === 'quote') return json_(quoteResponse_(p));
     if (action === 'reviews') return json_(getApprovedReviews_());
@@ -407,17 +408,17 @@ function adminLogin(username, password) {
     username = null;
   }
   var cache = CacheService.getScriptCache();
-  var lockedUntil = Number(cache.get('admin-login-locked-until') || 0);
+  var lockedUntil = Number(cache.get('admin-login-locked-until-v2') || 0);
   if (lockedUntil && Date.now() < lockedUntil) {
     throw new Error('Too many failed sign-in attempts. Please try again later.');
   }
   function failLogin_() {
-    var attempts = Number(cache.get('admin-login-attempts') || 0) + 1;
-    cache.put('admin-login-attempts', String(attempts), LOGIN_LOCK_SECONDS);
+    var attempts = Number(cache.get('admin-login-attempts-v2') || 0) + 1;
+    cache.put('admin-login-attempts-v2', String(attempts), LOGIN_LOCK_SECONDS);
     if (attempts >= LOGIN_MAX_ATTEMPTS) {
-      cache.put('admin-login-locked-until',
+      cache.put('admin-login-locked-until-v2',
         String(Date.now() + LOGIN_LOCK_SECONDS * 1000), LOGIN_LOCK_SECONDS);
-      cache.remove('admin-login-attempts');
+      cache.remove('admin-login-attempts-v2');
       throw new Error('Too many failed sign-in attempts. Please try again later.');
     }
     throw new Error('Incorrect username or password.');
@@ -436,7 +437,7 @@ function adminLogin(username, password) {
   if (hashPassword_(String(password || ''), salt) !== hash) {
     failLogin_();
   }
-  cache.remove('admin-login-attempts');
+  cache.remove('admin-login-attempts-v2');
   var token = newToken_();
   cache.put('admin-token-' + token, JSON.stringify({
     actor: ADMIN_USERNAME,
@@ -450,6 +451,41 @@ function adminLogout(token) {
     try { CacheService.getScriptCache().remove('admin-token-' + String(token)); } catch (err) {}
   }
   return { ok: true };
+}
+
+/** Clears the admin sign-in lockout and the failed-attempt counter
+ *  (current v2 keys, plus the pre-v8 keys for safety). */
+function clearLoginLockout_() {
+  var cache = CacheService.getScriptCache();
+  cache.remove('admin-login-locked-until-v2');
+  cache.remove('admin-login-attempts-v2');
+  cache.remove('admin-login-locked-until');
+  cache.remove('admin-login-attempts');
+}
+
+/** Dashboard action: reset the sign-in lockout on demand. Caller must
+ *  already be an admin (Rob's Google identity, or a valid admin token).
+ *  Audited in the Admin Audit tab. */
+function adminResetLoginLockout(token) {
+  var admin = requireAdmin_(token);
+  clearLoginLockout_();
+  audit_(admin.actor, 'Clear admin login lockout', '');
+  return { ok: true };
+}
+
+/** GET ?action=reset-lockout — Rob's on-demand reset link. Only Rob's
+ *  Google identity (adminIdentity_) can clear the lockout this way;
+ *  anyone else just gets an explanation, and nothing is cleared. */
+function resetLockoutResponse_() {
+  var identity = adminIdentity_();
+  if (!identity) {
+    return json_({ ok: false, error: 'Not cleared. Open this link while ' +
+      'signed in to Google as rob@controllattice.com.' });
+  }
+  clearLoginLockout_();
+  audit_(identity.actor, 'Clear admin login lockout (reset link)', '');
+  return json_({ ok: true, cleared: true,
+    message: 'Admin sign-in lockout cleared. Jag can sign in now.' });
 }
 
 /** Requires an already-authorised admin. Min 14 chars. Stores salt +
@@ -1292,7 +1328,7 @@ function adminHtmlOutput_() {
 // functions implemented above with the same names and shapes.
 var ADMIN_HTML = `<!doctype html><html><head><style>
 *{box-sizing:border-box}body{margin:0;font:16px/1.5 system-ui;background:#f4f8f8;color:#163342}header{padding:20px;background:#163342;color:white;display:flex;justify-content:space-between;align-items:center}main{max-width:1200px;margin:auto;padding:20px}h1{font-size:24px;margin:0}h2{margin:24px 0 12px}button,input,select,textarea{font:inherit;border:1px solid #b8cbd0;border-radius:7px;padding:10px}button{cursor:pointer;background:white;color:#163342}button.primary{background:#176b77;color:white}input,select,textarea{width:100%;background:white}label{display:block;font-weight:600}section,.room,.record{background:white;border:1px solid #d7e2e2;border-radius:12px;padding:16px;margin-bottom:12px}.rooms{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}.room ul{padding-left:18px;font-size:14px}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.row>*{flex:1}.row button{flex:0 0 auto}.fields{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.wide{grid-column:1/-1}.muted{color:#566a74}#message{position:sticky;top:0;background:#e3f1f2;padding:12px;z-index:2;white-space:pre-wrap}.record h3{margin:0 0 6px}.record p{margin:4px 0}#login{max-width:460px;margin:30px auto}dialog{border:0;border-radius:12px;max-width:650px;width:calc(100% - 24px)}dialog::backdrop{background:#0008}[hidden]{display:none!important}@media(max-width:600px){.fields{grid-template-columns:1fr}.wide{grid-column:auto}header{flex-wrap:wrap;gap:10px}}
-</style></head><body><header><h1>Ravi’s Guest House ÃÂ· Admin</h1><div class="row"><a style="color:white" href="https://ravisguesthouse.com" target="_blank">Website</a><button id="logout">Sign out</button></div></header><main><p id="message" role="status">Loading…</p><section id="login" hidden><h2>Administrator sign-in</h2><p>Jag: sign in with your username (your Google address, rgh.cleveland@gmail.com) and the administrator password Rob has set. Rob can open this page while signed in to rob@controllattice.com.</p><form id="login-form"><label>Username<input id="username" type="email" autocomplete="username" placeholder="rgh.cleveland@gmail.com" required></label><label>Password<input id="password" type="password" autocomplete="current-password" required></label><button class="primary">Sign in</button></form></section><div id="dashboard" hidden><div class="row"><label>Calendar month<input id="month" type="month"></label><button id="reload">Refresh</button><button id="new" class="primary">Add reservation or block</button></div><h2>All 10 rooms</h2><div id="rooms" class="rooms"></div><h2>Reservations and requests</h2><div class="row"><label>Status<select id="filter"><option>All</option><option>Pending</option><option>Confirmed</option><option>Maintenance</option><option>Denied</option><option>Cancelled</option></select></label></div><div id="bookings"></div><h2>Guest reviews</h2><div id="reviews"></div><section><h2>Pricing</h2><p>Room prices include any taxes Jag absorbs. No tax is added to the guest’s total.</p><form id="pricing-form"><label>Proration basis<select id="billing-days"><option value="30">Monthly rate ÃÂ· 30 ÃÂ nights</option><option value="31">Monthly rate ÃÂ· 31 ÃÂ nights</option></select></label><button>Save pricing settings</button></form></section><section><h2>Administrator password</h2><p id="password-status"></p><form id="password-form"><label>New password (at least 14 characters)<input id="new-password" type="password" minlength="14" autocomplete="new-password" required></label><button>Set password</button></form></section></div></main><dialog id="edit"><form id="booking-form"><h2 id="edit-title">Reservation</h2><input id="booking-id" type="hidden"><div class="fields"><label>Room<select id="room"></select></label><label>Status<select id="status"><option>Pending</option><option>Confirmed</option><option>Denied</option><option>Cancelled</option><option>Maintenance</option></select></label><label>Move-in<input id="move-in" type="date" required></label><label>Move-out (first unoccupied day)<input id="move-out" type="date" required></label><label>Guest name or block description<input id="guest" required></label><label>Email<input id="email" type="email"></label><label>Payment method<select id="booking-payment"><option value="">Select method</option><option>Credit or debit card</option><option>PayPal</option><option>Venmo</option><option>Zelle</option><option>Cash</option></select></label><label class="wide">Notes<textarea id="notes"></textarea></label></div><p>Confirmed reservations and maintenance blocks update the room calendar. Overlapping stays are prevented. Cancelled records stay available in the history.</p><p id="quote-summary">Choose dates to calculate the stay cost.</p><button id="calculate" type="button">Calculate cost</button><div class="row"><button class="primary">Save</button><button id="close" type="button">Close</button></div></form></dialog><script>
+</style></head><body><header><h1>Ravi’s Guest House ÃÂ· Admin</h1><div class="row"><a style="color:white" href="https://ravisguesthouse.com" target="_blank">Website</a><button id="logout">Sign out</button></div></header><main><p id="message" role="status">Loading…</p><section id="login" hidden><h2>Administrator sign-in</h2><p>Jag: sign in with your username (your Google address, rgh.cleveland@gmail.com) and the administrator password Rob has set. Rob can open this page while signed in to rob@controllattice.com.</p><form id="login-form"><label>Username<input id="username" type="email" autocomplete="username" placeholder="rgh.cleveland@gmail.com" required></label><label>Password<input id="password" type="password" autocomplete="current-password" required></label><button class="primary">Sign in</button></form></section><div id="dashboard" hidden><div class="row"><label>Calendar month<input id="month" type="month"></label><button id="reload">Refresh</button><button id="new" class="primary">Add reservation or block</button></div><h2>All 10 rooms</h2><div id="rooms" class="rooms"></div><h2>Reservations and requests</h2><div class="row"><label>Status<select id="filter"><option>All</option><option>Pending</option><option>Confirmed</option><option>Maintenance</option><option>Denied</option><option>Cancelled</option></select></label></div><div id="bookings"></div><h2>Guest reviews</h2><div id="reviews"></div><section><h2>Pricing</h2><p>Room prices include any taxes Jag absorbs. No tax is added to the guest’s total.</p><form id="pricing-form"><label>Proration basis<select id="billing-days"><option value="30">Monthly rate ÃÂ· 30 ÃÂ nights</option><option value="31">Monthly rate ÃÂ· 31 ÃÂ nights</option></select></label><button>Save pricing settings</button></form></section><section><h2>Administrator password</h2><p id="password-status"></p><form id="password-form"><label>New password (at least 14 characters)<input id="new-password" type="password" minlength="14" autocomplete="new-password" required></label><button>Set password</button></form><p><button id="clear-lockout" type="button">Clear sign-in lockout</button> <span id="lockout-status"></span></p></section></div></main><dialog id="edit"><form id="booking-form"><h2 id="edit-title">Reservation</h2><input id="booking-id" type="hidden"><div class="fields"><label>Room<select id="room"></select></label><label>Status<select id="status"><option>Pending</option><option>Confirmed</option><option>Denied</option><option>Cancelled</option><option>Maintenance</option></select></label><label>Move-in<input id="move-in" type="date" required></label><label>Move-out (first unoccupied day)<input id="move-out" type="date" required></label><label>Guest name or block description<input id="guest" required></label><label>Email<input id="email" type="email"></label><label>Payment method<select id="booking-payment"><option value="">Select method</option><option>Credit or debit card</option><option>PayPal</option><option>Venmo</option><option>Zelle</option><option>Cash</option></select></label><label class="wide">Notes<textarea id="notes"></textarea></label></div><p>Confirmed reservations and maintenance blocks update the room calendar. Overlapping stays are prevented. Cancelled records stay available in the history.</p><p id="quote-summary">Choose dates to calculate the stay cost.</p><button id="calculate" type="button">Calculate cost</button><div class="row"><button class="primary">Save</button><button id="close" type="button">Close</button></div></form></dialog><script>
 let token=sessionStorage.getItem('ravi-admin-token')||'',data;
 const $=id=>document.getElementById(id),message=text=>$('message').textContent=text;
 const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1316,6 +1352,7 @@ $('reload').onclick=()=>run(load);$('month').onchange=()=>run(load);$('filter').
 $('login-form').onsubmit=e=>{e.preventDefault();run(async()=>{const result=await call('adminLogin',$('username').value,$('password').value);$('password').value='';token=result.token;sessionStorage.setItem('ravi-admin-token',token);await load();});};
 $('logout').onclick=()=>run(async()=>{await call('adminLogout',token);token='';sessionStorage.removeItem('ravi-admin-token');$('dashboard').hidden=true;$('login').hidden=false;message('Password session ended. If using Google sign-in, sign out of Google to end that session.');});
 $('password-form').onsubmit=e=>{e.preventDefault();run(async()=>{await call('adminSetPassword',token,$('new-password').value);$('new-password').value='';await load();message('Administrator password saved.');});};
+$('clear-lockout').onclick=()=>{run(async()=>{await call('adminResetLoginLockout',token);$('lockout-status').textContent='Lockout cleared just now.';message('Sign-in lockout cleared.');});};
 $('booking-form').onsubmit=e=>{e.preventDefault();run(async()=>{await call('adminSaveBooking',token,{id:$('booking-id').value,room:$('room').value,status:$('status').value,moveIn:$('move-in').value,moveOut:$('move-out').value,name:$('guest').value,email:$('email').value,notes:$('notes').value,paymentMethod:$('booking-payment').value});$('edit').close();await load();message('Reservation saved and calendar updated.');});};
 document.addEventListener('click',e=>{const b=e.target.closest('[data-edit]');if(b)edit(Number(b.dataset.edit));const review=e.target.closest('[data-review]');if(review)run(async()=>{await call('adminModerateReview',token,data.reviews[Number(review.dataset.review)][1],review.dataset.status);await load();message('Review status saved.');});});
 document.addEventListener('submit',e=>{const form=e.target.closest('[data-rate]');if(form){e.preventDefault();run(async()=>{await call('adminSaveRate',token,form.dataset.rate,form.querySelector('input').value);await load();message('Room rate saved.');});}});load();
