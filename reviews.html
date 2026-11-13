@@ -17,7 +17,7 @@
   <main>
     <header class="hero"><div class="wrap"><p class="eyebrow">Guest reviews</p><h1>Stories from guests who called it home.</h1><p>Read approved experiences from students, medical professionals, and other guests who stayed with Ravi in Cleveland.</p></div></header>
     <section class="section" aria-labelledby="published-reviews"><div class="wrap"><h2 id="published-reviews">Published testimonials</h2><article class="review-card"><blockquote>Your accommodation holds a special place in my memories. It was my first home during four months of rotations and, most importantly, the place where I made the best memories. I would definitely recommend your place to my friends and juniors. Thank you for everything!</blockquote><footer>Former medical rotation guest</footer></article></div></section>
-    <section class="section form-section" id="leave-review" aria-labelledby="review-heading"><div class="wrap"><p class="eyebrow" style="color:#75cbd0">Share your experience</p><h2 id="review-heading">Leave a private review for approval.</h2><p class="form-intro">Your review will be sent privately to Jag. It will not appear on this website unless he reviews and approves it for publication.</p>
+    <section class="section form-section" id="leave-review" aria-labelledby="review-heading"><div class="wrap"><p class="eyebrow" style="color:#75cbd0">Share your experience</p><h2 id="review-heading">Leave a private review for approval.</h2><p class="form-intro">Your review will be sent privately to Ravi. It will not appear on this website unless he reviews and approves it for publication.</p>
       <form class="form" id="review-form">
         <div class="form-grid">
           <div class="field"><label for="review-name">Your name</label><input id="review-name" name="name" autocomplete="name" required></div>
@@ -28,8 +28,8 @@
           <div class="field"><label for="stay-to">Stay ended (optional)</label><input id="stay-to" name="stayTo" type="month"></div>
           <div class="field span-2"><label for="review-text">Your review</label><textarea id="review-text" name="review" maxlength="3000" placeholder="What did you appreciate about your stay?" required></textarea></div>
           <div class="field span-2"><label for="display-name">If approved, how may we identify you?</label><select id="display-name" name="displayName" required><option value="Anonymous guest">Anonymous guest</option><option value="First name and last initial">First name and last initial</option><option value="Full name">Full name</option><option value="Former medical rotation guest">Former medical rotation guest</option></select></div>
-          <div class="privacy"><strong>Private until approved.</strong> Submitting this form does not publish your review. Jag receives it by email and decides whether it may be added to the website.</div>
-          <button class="cta span-2" type="submit">Send review to Jag</button>
+          <div class="privacy"><strong>Private until approved.</strong> Submitting this form does not publish your review. Ravi receives it by email and decides whether it may be added to the website.</div>
+          <button class="cta span-2" type="submit">Send review to Ravi</button>
         </div>
         <p class="status" id="review-status" role="status">All required fields must be completed before submission.</p>
       </form>
@@ -43,15 +43,15 @@
       const form=event.currentTarget,button=form.querySelector('button[type="submit"]'),status=document.querySelector("#review-status"),data=new FormData(form);
       const reviewId="RSGH-REV-"+Date.now().toString(36).toUpperCase();
       const payload=new URLSearchParams({action:"review",reviewId,name:String(data.get("name")||""),email:String(data.get("email")||""),room:String(data.get("room")||""),rating:String(data.get("rating")||""),stayFrom:String(data.get("stayFrom")||""),stayTo:String(data.get("stayTo")||""),displayName:String(data.get("displayName")||""),review:String(data.get("review")||"")});
-      button.disabled=true;button.textContent="Sending review…";status.className="status";status.textContent="Sending your review privately to Jag…";
+      button.disabled=true;button.textContent="Sending review…";status.className="status";status.textContent="Sending your review privately to Ravi…";
       try{
         const response=await fetch(REVIEW_API_URL,{method:"POST",body:payload,redirect:"follow"});
         if(!response.ok)throw new Error("The review service could not be reached.");
         const result=await response.json();
         if(!result.ok)throw new Error(result.error||"The review could not be submitted.");
-        form.reset();status.className="status success";status.textContent="Thank you. Your review was sent to Jag for approval. Reference: "+(result.reviewId||reviewId);button.textContent="Review sent";
+        form.reset();status.className="status success";status.textContent="Thank you. Your review was sent to Ravi for approval. Reference: "+(result.reviewId||reviewId);button.textContent="Review sent";
       }catch(error){
-        status.className="status error";status.textContent=(error&&error.message?error.message:"The review could not be submitted.")+" Please try again or contact Jag directly.";button.disabled=false;button.textContent="Send review to Jag";
+        status.className="status error";status.textContent=(error&&error.message?error.message:"The review could not be submitted.")+" Please try again or contact Ravi directly.";button.disabled=false;button.textContent="Send review to Ravi";
       }
     });
 
