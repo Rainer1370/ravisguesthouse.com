@@ -810,5 +810,29 @@ test('admin API: adminLinkLogin is dispatched; setupLinkSecret is NOT', () => {
   assert.match(setup.error, /Unknown admin function/);
 });
 
+test('review moderation: approving persists the status and publishes the review; returning to pending unpublishes it', () => {
+  const ctx = fresh();
+  ctx.state.activeEmail = 'rob@controllattice.com';
+  ctx.sandbox.adminSetPassword('', 'correct-horse-battery-staple-99');
+  ctx.state.activeEmail = 'rgh.cleveland@gmail.com';
+  const login = ctx.sandbox.adminLogin('rgh.cleveland@gmail.com', 'correct-horse-battery-staple-99');
+  const pub = () => JSON.parse(ctx.sandbox.doGet({ parameter: { action: 'reviews' } }).getContent());
+  // Baseline: only the seeded Approved review (RSGH-REV-1) is public.
+  assert.deepStrictEqual(pub().reviews.map((r) => r.review), ['Wonderful stay, felt at home.']);
+  const res = ctx.sandbox.adminModerateReview(login.token, 'RSGH-REV-2', 'Approved');
+  assert.strictEqual(res.ok, true);
+  // The new status must be PERSISTED in the sheet (Status column = index 2),
+  // not just reported in the return value.
+  const row2 = ctx.ss._sheets['Review Submissions']._data.find((r) => r[1] === 'RSGH-REV-2');
+  assert.strictEqual(row2[2], 'Approved');
+  // And the review must appear on the public feed the guest page reads.
+  assert.ok(pub().reviews.some((r) => r.review === 'Good, quiet room.'));
+  // Returning it to pending must unpublish it again.
+  ctx.sandbox.adminModerateReview(login.token, 'RSGH-REV-2', 'Pending approval');
+  const row2b = ctx.ss._sheets['Review Submissions']._data.find((r) => r[1] === 'RSGH-REV-2');
+  assert.strictEqual(row2b[2], 'Pending approval');
+  assert.ok(!pub().reviews.some((r) => r.review === 'Good, quiet room.'));
+});
+
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed ? 1 : 0);
