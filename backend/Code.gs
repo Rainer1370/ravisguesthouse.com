@@ -403,7 +403,7 @@ function requireAdmin_(token) {
     if (data) return { actor: data.actor || 'password-admin', method: 'password' };
   }
   throw new Error('Administrator sign-in required. Rob can open this page ' +
-    'while signed in to rob@controllattice.com; Jag signs in with his ' +
+    'while signed in to rob@controllattice.com; Ravi signs in with his ' +
     'username (rgh.cleveland@gmail.com) and the administrator password.');
 }
 
