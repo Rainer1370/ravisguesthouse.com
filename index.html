@@ -169,7 +169,7 @@
         const q=await response.json();
         if(!q.ok)throw new Error(q.error||"Quote unavailable");
         const fee=q.feeWaived?"Transaction fee waived for "+(q.paymentMethod||"this payment method"):"Transaction fee "+money(q.transactionFee);
-        summary.textContent=q.nights+" nights · Rent "+money(q.subtotal)+" · Cleaning "+money(q.cleaningFee)+" (nonrefundable) · Security deposit "+money(q.securityDeposit)+" (refundable) · "+fee+" · Total "+money(q.total)+" · "+money(q.reservationPayment)+" due upfront, credited toward total · Remaining "+money(q.balanceAfterReservation)+" · No added tax. Final pricing is confirmed by Ravi.";
+        summary.textContent=q.nights+" nights · Rent "+money(q.subtotal)+" · Cleaning "+money(q.cleaningFee)+" (nonrefundable) · Security deposit "+money(q.securityDeposit)+" (refundable) · "+fee+" · Total "+money(q.total)+" · "+money(q.reservationPayment)+" due upfront, credited toward total · Remaining "+money(q.balanceAfterReservation)+" · Tax "+money(q.tax)+" ("+q.taxPercent+"% on rent + cleaning). Final pricing is confirmed by Ravi.";
       }catch(error){
         summary.textContent="Estimated cost is unavailable right now. Ravi will confirm final pricing before payment.";
       }
