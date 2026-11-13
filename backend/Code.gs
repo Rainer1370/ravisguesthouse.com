@@ -716,8 +716,8 @@ function adminModerateReview(token, reviewId, status) {
     if (String(r.reviewId) === String(reviewId)) found = r;
   });
   if (!found) throw new Error('Review not found: ' + reviewId);
+  found.status = String(status);
   var row = buildReviewRow_(found);
-  row[2] = status;
   updateReviewRow_(found.rowIndex, row);
   audit_(admin.actor, 'Review ' + reviewId + ' -> ' + status, String(reviewId));
   return { ok: true, reviewId: String(reviewId), status: String(status) };
