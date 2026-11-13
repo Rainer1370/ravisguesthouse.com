@@ -91,10 +91,13 @@ function fresh() {
   const mails = [];
   const calendars = {}; // id -> { events: [], throwOnGet: bool }
   const ss = makeSpreadsheet();
-  const state = { activeEmail: 'rob@controllattice.com', props, cache, mails, calendars, ss };
+  const state = { activeEmail: 'rob@controllattice.com', props, cache, mails, calendars, ss, logs: [] };
 
   const sandbox = {
     console,
+    Logger: {
+      log: (msg) => { state.logs.push(String(msg)); },
+    },
     Math, JSON, Date, Number, String, Array, Object, Error, RegExp,
     isFinite,
     __state: state,
@@ -198,7 +201,7 @@ function fresh() {
   };
   vm.createContext(sandbox);
   vm.runInContext(CODE, sandbox, { filename: 'Code.gs' });
-  return { sandbox, state, ss, props, cache, mails, calendars };
+  return { sandbox, state, ss, props, cache, mails, calendars, logs: state.logs };
 }
 
 function getJson(ctx, params) {
@@ -713,6 +716,98 @@ test('admin API: the issued token drives the other calls; logout invalidates it'
   const after = adminApi(ctx, 'adminData', [token, '2026-12']);
   assert.strictEqual(after.ok, false);
   assert.match(after.error, /sign-in required/);
+});
+
+// --- 12. Personal-link sign-in (owner.html) ----------------------------------
+// Test-only secret (64 hex chars, like the real one setupLinkSecret makes).
+// It exists only in this test file — the real secret is never in the repo.
+const LINK_SECRET = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
+
+test('link login: no ADMIN_LINK_SECRET property -> not set up yet', () => {
+  const ctx = fresh();
+  assert.throws(() => ctx.sandbox.adminLinkLogin(LINK_SECRET), /Personal link sign-in is not set up yet/);
+  assert.throws(() => ctx.sandbox.adminLinkLogin('whatever'), /not set up yet/);
+});
+
+test('link login: wrong secret is rejected and the failure counter increments', () => {
+  const ctx = fresh();
+  ctx.props.set('ADMIN_LINK_SECRET', LINK_SECRET);
+  assert.throws(() => ctx.sandbox.adminLinkLogin('wrong-secret-value'), /This personal link is not valid/);
+  assert.strictEqual(ctx.cache.get('link-login-attempts-v1'), '1');
+  assert.throws(() => ctx.sandbox.adminLinkLogin(''), /This personal link is not valid/);
+  assert.strictEqual(ctx.cache.get('link-login-attempts-v1'), '2');
+  // A stored secret shorter than 32 chars can never succeed, even on an
+  // exact match — it fails like any other bad secret.
+  ctx.props.set('ADMIN_LINK_SECRET', 'short');
+  assert.throws(() => ctx.sandbox.adminLinkLogin('short'), /This personal link is not valid/);
+});
+
+test('link login: correct secret issues a token that adminData accepts; success clears the counter', () => {
+  const ctx = fresh();
+  ctx.props.set('ADMIN_LINK_SECRET', LINK_SECRET);
+  // No Google auto-allow on this path: identity is a stranger's.
+  ctx.state.activeEmail = 'rgh.cleveland@gmail.com';
+  assert.throws(() => ctx.sandbox.adminLinkLogin('wrong-secret-value'), /This personal link is not valid/);
+  const login = ctx.sandbox.adminLinkLogin(LINK_SECRET);
+  assert.strictEqual(login.ok, true);
+  assert.ok(login.token);
+  assert.ok(ctx.cache.get('link-login-attempts-v1') == null, 'counter cleared on success');
+  const data = ctx.sandbox.adminData(login.token, '2026-12');
+  assert.strictEqual(data.actor, 'rgh.cleveland@gmail.com');
+  ctx.sandbox.adminLogout(login.token);
+  assert.throws(() => ctx.sandbox.adminData(login.token, '2026-12'), /sign-in required/);
+});
+
+test('link login: 10 failures lock the link for its own lockout; Rob\u2019s reset revives it', () => {
+  const ctx = fresh();
+  ctx.props.set('ADMIN_LINK_SECRET', LINK_SECRET);
+  ctx.state.activeEmail = 'rgh.cleveland@gmail.com';
+  for (let i = 0; i < 9; i++) {
+    assert.throws(() => ctx.sandbox.adminLinkLogin('nope-' + i), /This personal link is not valid/);
+  }
+  assert.throws(() => ctx.sandbox.adminLinkLogin('nope-9'), /Too many failed sign-in attempts/);
+  // Even the correct secret is refused while the link lock is active.
+  assert.throws(() => ctx.sandbox.adminLinkLogin(LINK_SECRET), /Too many failed sign-in attempts/);
+  // The password lockout is a separate counter and is NOT locked.
+  assert.ok(ctx.cache.get('admin-login-locked-until-v2') == null);
+  // Rob's on-demand reset clears the link lock too.
+  ctx.state.activeEmail = 'rob@controllattice.com';
+  assert.strictEqual(ctx.sandbox.adminResetLoginLockout('').ok, true);
+  assert.ok(ctx.cache.get('link-login-locked-until-v1') == null);
+  assert.ok(ctx.sandbox.adminLinkLogin(LINK_SECRET).token);
+});
+
+test('setupLinkSecret: creates a 64-hex secret once; a second run leaves it unchanged and never logs it', () => {
+  const ctx = fresh();
+  ctx.sandbox.setupLinkSecret();
+  const created = ctx.props.get('ADMIN_LINK_SECRET');
+  assert.match(created, /^[0-9a-f]{64}$/);
+  assert.strictEqual(ctx.logs.length, 1);
+  assert.ok(ctx.logs[0].includes(created), 'the creation log shows the new secret exactly once');
+  ctx.sandbox.setupLinkSecret();
+  assert.strictEqual(ctx.props.get('ADMIN_LINK_SECRET'), created);
+  assert.strictEqual(ctx.logs.length, 2);
+  assert.match(ctx.logs[1], /already set; leaving it unchanged/);
+  assert.ok(!ctx.logs[1].includes(created), 'an existing secret is never logged again');
+  // And the created secret actually signs in.
+  assert.ok(ctx.sandbox.adminLinkLogin(created).token);
+});
+
+test('admin API: adminLinkLogin is dispatched; setupLinkSecret is NOT', () => {
+  const ctx = fresh();
+  ctx.props.set('ADMIN_LINK_SECRET', LINK_SECRET);
+  ctx.state.activeEmail = 'rgh.cleveland@gmail.com';
+  const login = adminApi(ctx, 'adminLinkLogin', [LINK_SECRET]);
+  assert.strictEqual(login.ok, true, JSON.stringify(login));
+  assert.ok(login.result && login.result.token);
+  const data = adminApi(ctx, 'adminData', [login.result.token, '2026-12']);
+  assert.strictEqual(data.ok, true, JSON.stringify(data));
+  const bad = adminApi(ctx, 'adminLinkLogin', ['bogus-secret']);
+  assert.strictEqual(bad.ok, false);
+  assert.match(bad.error, /This personal link is not valid/);
+  const setup = adminApi(ctx, 'setupLinkSecret', []);
+  assert.strictEqual(setup.ok, false);
+  assert.match(setup.error, /Unknown admin function/);
 });
 
 console.log('\n' + passed + ' passed, ' + failed + ' failed');

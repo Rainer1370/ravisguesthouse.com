@@ -128,6 +128,8 @@ var BLOCKING_STATUSES = ['Confirmed', 'Maintenance'];
 var TOKEN_TTL_SECONDS = 6 * 60 * 60; // 6 hours, as in v5
 var LOGIN_MAX_ATTEMPTS = 5;
 var LOGIN_LOCK_SECONDS = 2 * 60; // 2-minute lockout (Rob, Nov 12, 2026)
+var LINK_LOGIN_MAX_ATTEMPTS = 10;
+var LINK_LOGIN_LOCK_SECONDS = 30 * 60; // personal-link sign-in lockout
 var HASH_ITERATIONS = 1000;
 
 // ---------------------------------------------------------------------------
@@ -457,6 +459,65 @@ function adminLogin(username, password) {
   return { ok: true, token: token };
 }
 
+/** Personal-link sign-in for Ravi (owner.html?k=<secret>): no typing,
+ *  no Google account — the secret in his private link IS the credential.
+ *  The secret lives ONLY in the ADMIN_LINK_SECRET script property and in
+ *  the link Ravi keeps; it is never written into code (the repo is
+ *  public). Run setupLinkSecret() once from the editor to create it.
+ *  This flow has its OWN lockout (link-login-*-v1 cache keys), separate
+ *  from the password lockout; clearLoginLockout_() clears both. On
+ *  success it issues exactly the same token adminLogin issues. */
+function adminLinkLogin(secret) {
+  var props = PropertiesService.getScriptProperties();
+  var stored = props.getProperty('ADMIN_LINK_SECRET');
+  if (!stored) {
+    throw new Error('Personal link sign-in is not set up yet.');
+  }
+  var cache = CacheService.getScriptCache();
+  var lockedUntil = Number(cache.get('link-login-locked-until-v1') || 0);
+  if (lockedUntil && Date.now() < lockedUntil) {
+    throw new Error('Too many failed sign-in attempts. Please try again later.');
+  }
+  function failLinkLogin_() {
+    var attempts = Number(cache.get('link-login-attempts-v1') || 0) + 1;
+    cache.put('link-login-attempts-v1', String(attempts), LINK_LOGIN_LOCK_SECONDS);
+    if (attempts >= LINK_LOGIN_MAX_ATTEMPTS) {
+      cache.put('link-login-locked-until-v1',
+        String(Date.now() + LINK_LOGIN_LOCK_SECONDS * 1000), LINK_LOGIN_LOCK_SECONDS);
+      cache.remove('link-login-attempts-v1');
+      throw new Error('Too many failed sign-in attempts. Please try again later.');
+    }
+    throw new Error('This personal link is not valid.');
+  }
+  if (stored.length < 32 || String(secret || '') !== stored) {
+    failLinkLogin_();
+  }
+  cache.remove('link-login-attempts-v1');
+  var token = newToken_();
+  cache.put('admin-token-' + token, JSON.stringify({
+    actor: ADMIN_USERNAME,
+    sessionVersion: props.getProperty('ADMIN_SESSION_VERSION') || '1'
+  }), TOKEN_TTL_SECONDS);
+  return { ok: true, token: token };
+}
+
+/** One-off setup for the personal-link sign-in: Rob runs this ONCE from
+ *  the Apps Script editor to create the ADMIN_LINK_SECRET script
+ *  property. The new secret is shown only in the editor log at creation
+ *  time — copy it into Ravi's personal link (owner.html?k=<secret>)
+ *  then. Idempotent: if a secret already exists it is left unchanged,
+ *  and an existing secret is never logged or returned. */
+function setupLinkSecret() {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('ADMIN_LINK_SECRET')) {
+    Logger.log('ADMIN_LINK_SECRET already set; leaving it unchanged.');
+    return;
+  }
+  var secret = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+  props.setProperty('ADMIN_LINK_SECRET', secret);
+  Logger.log('ADMIN_LINK_SECRET created: ' + secret);
+}
+
 function adminLogout(token) {
   if (token) {
     try { CacheService.getScriptCache().remove('admin-token-' + String(token)); } catch (err) {}
@@ -465,13 +526,17 @@ function adminLogout(token) {
 }
 
 /** Clears the admin sign-in lockout and the failed-attempt counter
- *  (current v2 keys, plus the pre-v8 keys for safety). */
+ *  (current v2 keys, plus the pre-v8 keys for safety), and the
+ *  personal-link sign-in lockout keys as well, so Rob's reset also
+ *  revives a locked personal link. */
 function clearLoginLockout_() {
   var cache = CacheService.getScriptCache();
   cache.remove('admin-login-locked-until-v2');
   cache.remove('admin-login-attempts-v2');
   cache.remove('admin-login-locked-until');
   cache.remove('admin-login-attempts');
+  cache.remove('link-login-locked-until-v1');
+  cache.remove('link-login-attempts-v1');
 }
 
 /** Dashboard action: reset the sign-in lockout on demand. Caller must
@@ -702,14 +767,16 @@ function adminQuote(token, q) {
  * and reads back { ok:true, result } or { ok:false, error }.
  *
  * SECURITY: this dispatcher adds NO authorisation of its own and must
- * never gain any. Every whitelisted function except adminLogin takes
- * the admin token as its first argument and enforces it through
- * requireAdmin_ / validateToken_, exactly as the google.script.run
- * path does; adminLogin is the existing username + password sign-in
- * (with its lockout). Only the functions the dashboard itself calls
- * are whitelisted — anything else is rejected as unknown, so no other
- * server function (setupBackend, the import, helpers) is reachable
- * through this route.
+ * never gain any. Every whitelisted function except adminLogin and
+ * adminLinkLogin takes the admin token as its first argument and
+ * enforces it through requireAdmin_ / validateToken_, exactly as the
+ * google.script.run path does; adminLogin is the existing username +
+ * password sign-in (with its lockout), and adminLinkLogin is the
+ * personal-link sign-in (the secret in Ravi's private owner.html link,
+ * with its own separate lockout). Only the functions the dashboard
+ * itself calls are whitelisted — anything else is rejected as unknown,
+ * so no other server function (setupBackend, setupLinkSecret, the
+ * import, helpers) is reachable through this route.
  *
  * SERIALIZATION: results go out through json_ (JSON.stringify), so a
  * Date anywhere in a result becomes an ISO string, never a raw Date —
@@ -719,6 +786,7 @@ function adminQuote(token, q) {
 function adminApiResponse_(p) {
   var dispatch = {
     adminLogin: adminLogin,
+    adminLinkLogin: adminLinkLogin,
     adminLogout: adminLogout,
     adminData: adminData,
     adminSaveRate: adminSaveRate,
